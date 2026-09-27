@@ -1,0 +1,557 @@
+package ui
+
+import "github.com/jhonataT/ai-decrivo-golang/internal/review"
+
+templ Home(r *review.Review) {
+	<main class="app">
+		if r == nil {
+			@Empty()
+		} else {
+			@ReviewPage(r)
+		}
+	</main>
+}
+
+templ Empty() {
+	<div class="empty" hx-get="/ui/current" hx-trigger="every 2s" hx-swap="outerHTML">
+		<div class="empty-card">
+			<div class="brand">Decrivo</div>
+			<p>Nenhuma revisão em andamento.</p>
+			<p class="dim">No Claude Code, dentro do projeto, rode:</p>
+			<code class="cmd">/decrivo-pr nome-da-branch</code>
+			<p>
+				<button type="button" class="link" hx-get="/ui/history" hx-target="closest .empty" hx-swap="outerHTML">
+					ver revisões anteriores
+				</button>
+			</p>
+		</div>
+	</div>
+}
+
+templ ReviewPage(r *review.Review) {
+	<div id="review" class="review" data-review={ r.ID }>
+		@StatusBar(r, false)
+		if r.Status == review.StatusRunning {
+			<div class="banner">
+				<span class="spinner"></span>
+				O agente está analisando a branch. Os achados aparecem conforme chegam; os vereditos liberam quando ele terminar.
+			</div>
+		} else if r.Status == review.StatusFinalized {
+			<div class="banner done">
+				Revisão finalizada em { formatTime(r.FinalizedAt) }. Somente leitura.
+			</div>
+		} else if r.Interrupted {
+			<div class="banner warn">
+				A análise foi interrompida (o app fechou antes do agente terminar). Os achados que chegaram podem ser julgados normalmente.
+			</div>
+		}
+		<div class="layout">
+			<aside class="sidebar">
+				@AgentVerdict(r)
+				@ChangeSummary(r)
+				@Filters(r)
+				@FileNav(r, false)
+			</aside>
+			<div class="files">
+				for i, file := range r.Files {
+					@FileSection(r, i, file)
+				}
+				<p class="filter-empty dim">Nenhum arquivo com os filtros atuais.</p>
+			</div>
+		</div>
+	</div>
+}
+
+// oob=true faz o HTMX trocar a barra fora do alvo (hx-swap-oob), após um veredito.
+templ StatusBar(r *review.Review, oob bool) {
+	{{ t := countVerdicts(r) }}
+	<header
+		id="statusbar"
+		class="statusbar"
+		if oob {
+			hx-swap-oob="true"
+		}
+		if r.Status == review.StatusRunning {
+			hx-get={ "/ui/reviews/" + r.ID + "/status" }
+			hx-trigger="every 1s"
+			hx-target="#review"
+			hx-swap="outerHTML"
+		}
+	>
+		<div class="branch">
+			<span class="brand">Decrivo</span>
+			<span class="dim repo" title={ r.Repo }>{ repoName(r.Repo) }</span>
+			<span class="ref mono">{ r.Branch }</span>
+			<span class="dim">→</span>
+			<span class="ref base mono">{ r.Base }</span>
+		</div>
+		<div class="progress">
+			<progress value={ itoa(t.Judged) } max={ itoa(max(len(r.Findings), 1)) }></progress>
+			<span><strong>{ itoa(t.Judged) }</strong> de { itoa(len(r.Findings)) } julgados</span>
+		</div>
+		<div class="tally">
+			<span class="tag v-accepted">{ itoa(t.Accepted) } aprovados</span>
+			<span class="tag v-adjusted">{ itoa(t.Adjusted) } ajustados</span>
+			<span class="tag v-rejected">{ itoa(t.Rejected) } retirados</span>
+		</div>
+		<button
+			type="button"
+			class="btn js-next-pending"
+			title="Ir para o próximo achado pendente (N; P volta)"
+			disabled?={ r.Pending() == 0 }
+		>
+			Próximo pendente <kbd>N</kbd>
+		</button>
+		<button type="button" class="btn ghost" hx-get="/ui/history" hx-target="#review" hx-swap="outerHTML">
+			Histórico
+		</button>
+		if r.Status == review.StatusFinalized {
+			<button
+				class="btn primary"
+				hx-get={ "/ui/reviews/" + r.ID + "/summary" }
+				hx-target="#review"
+				hx-swap="outerHTML"
+			>
+				Ver resumo
+			</button>
+		} else {
+			<button
+				class="btn primary"
+				hx-post={ "/ui/reviews/" + r.ID + "/finalize" }
+				hx-target="#review"
+				hx-swap="outerHTML"
+				disabled?={ r.Pending() > 0 || r.Status != review.StatusReady }
+				title={ finalizeHint(r) }
+			>
+				Finalizar revisão
+			</button>
+		}
+	</header>
+}
+
+templ FileNav(r *review.Review, oob bool) {
+	<nav
+		id="filenav"
+		class="filenav"
+		if oob {
+			hx-swap-oob="true"
+		}
+	>
+		<div class="nav-title">Arquivos <span class="dim">{ itoa(len(r.Files)) }</span></div>
+		for i, f := range r.Files {
+			{{ dir, name := splitPath(f.Path) }}
+			{{ pending, total := fileCounts(r, f.Path) }}
+			<a
+				class="nav-item"
+				href={ templ.SafeURL("#" + fileAnchor(i)) }
+				title={ f.Path }
+				data-path={ f.Path }
+				data-total={ itoa(total) }
+				data-pending={ itoa(pending) }
+				data-test?={ isTestFile(f.Path) }
+				data-generated?={ isGeneratedFile(f.Path) }
+			>
+				<span class="nav-path"><span class="dim">{ dir }</span>{ name }</span>
+				if pending > 0 {
+					<span class="pill warn" title="achados pendentes">{ itoa(pending) }</span>
+				} else if total > 0 {
+					<span class="pill ok" title="todos julgados">✓</span>
+				}
+			</a>
+		}
+	</nav>
+}
+
+templ FileSection(r *review.Review, i int, file review.FileChange) {
+	{{ adds, dels := fileStats(file) }}
+	<details
+		class="file"
+		id={ fileAnchor(i) }
+		data-path={ file.Path }
+		data-test?={ isTestFile(file.Path) }
+		data-generated?={ isGeneratedFile(file.Path) }
+		open
+	>
+		<summary class="file-head">
+			<span class="chev"></span>
+			<span class="mono path">{ file.Path }</span>
+			if isTestFile(file.Path) {
+				<span class="chip">teste</span>
+			} else if isGeneratedFile(file.Path) {
+				<span class="chip">gerado</span>
+			}
+			<span class="stat add">+{ itoa(adds) }</span>
+			<span class="stat del">−{ itoa(dels) }</span>
+			<button type="button" class="btn ghost viewed-btn" data-viewed-path={ file.Path } aria-pressed="false">Visto</button>
+		</summary>
+		if file.Context != "" {
+			<p class="file-context"><span class="file-context-label">O que este arquivo faz</span> { file.Context }</p>
+		}
+		if top := fileLevel(r, file.Path); len(top) > 0 {
+			<div class="file-comments">
+				for _, f := range top {
+					@FindingCard(r, f)
+				}
+			</div>
+		}
+		@DiffView(r, file)
+	</details>
+}
+
+templ DiffView(r *review.Review, file review.FileChange) {
+	{{ marks := byLine(r, file.Path) }}
+	<table class="diff mono">
+		<colgroup>
+			<col class="c-num"/>
+			<col class="c-code"/>
+			<col class="c-num"/>
+			<col class="c-code"/>
+		</colgroup>
+		<thead>
+			<tr><th colspan="2">antes</th><th colspan="2">depois</th></tr>
+		</thead>
+		<tbody>
+			for _, row := range splitRows(file.Lines) {
+				if row.Hunk != "" {
+					<tr class="hunk"><td colspan="4">{ row.Hunk }</td></tr>
+				} else {
+					<tr>
+						@side(row.Old, row.OldSegs, true)
+						@side(row.New, row.NewSegs, false)
+					</tr>
+					if row.New != nil {
+						for _, f := range marks[row.New.NewLine] {
+							<tr class="comment-row">
+								<td colspan="2" class="gap"></td>
+								<td colspan="2">
+									@FindingCard(r, f)
+								</td>
+							</tr>
+						}
+					}
+				}
+			}
+		</tbody>
+	</table>
+}
+
+templ side(l *review.DiffLine, segs []seg, old bool) {
+	if l == nil {
+		<td class="num blank"></td>
+		<td class="code blank"></td>
+	} else {
+		<td class={ "num", l.Kind }>{ lineNo(l, old) }</td>
+		<td class={ "code", l.Kind }>
+			if segs == nil {
+				{ l.Text }
+			} else {
+				for _, s := range segs {
+					if s.OnlySpace() {
+						<span class="hl ws">{ s.Text }</span>
+					} else if s.Changed {
+						<span class="hl">{ s.Text }</span>
+					} else {
+						{ s.Text }
+					}
+				}
+			}
+		</td>
+	}
+}
+
+templ FindingCard(r *review.Review, f review.Finding) {
+	{{ url := findingURL(r, f) }}
+	<article id={ "f-" + f.ID } class={ "finding", "kind-" + f.Kind, "sev-" + f.Severity, verdictClass(f) }>
+		<header class="finding-head">
+			<span class={ "chip", "kind-" + f.Kind }>{ kindLabel(f.Kind) }</span>
+			<span class={ "chip", "sev-" + f.Severity }>{ severityLabel(f.Severity) }</span>
+			<strong class="finding-title">@richText(f.Title)</strong>
+			<span class={ "verdict", verdictClass(f) }>{ verdictLabel(f) }</span>
+		</header>
+		<div class="finding-body">@richText(f.Body)</div>
+		if f.Adjusted {
+			<details class="original">
+				<summary>texto original do agente</summary>
+				<strong>@richText(f.OrigTitle)</strong>
+				<div class="finding-body">@richText(f.OrigBody)</div>
+			</details>
+		}
+		<footer class="actions">
+			if f.Verdict == review.VerdictPending {
+				<button
+					class="btn ok"
+					hx-post={ url + "/accept" }
+					hx-target={ "#f-" + f.ID }
+					hx-swap="outerHTML"
+					disabled?={ locked(r) }
+				>Aprovar</button>
+				<button
+					class="btn"
+					hx-get={ url + "/edit" }
+					hx-target={ "#f-" + f.ID }
+					hx-swap="outerHTML"
+					disabled?={ locked(r) }
+				>Ajustar</button>
+				<button
+					class="btn danger"
+					hx-post={ url + "/reject" }
+					hx-target={ "#f-" + f.ID }
+					hx-swap="outerHTML"
+					disabled?={ locked(r) }
+				>Retirar</button>
+				if locked(r) {
+					<span class="dim hint">{ lockHint(r) }</span>
+				}
+			} else if !locked(r) {
+				<button
+					class="btn ghost"
+					hx-post={ url + "/reset" }
+					hx-target={ "#f-" + f.ID }
+					hx-swap="outerHTML"
+				>Desfazer</button>
+			}
+		</footer>
+	</article>
+}
+
+// FindingEdit é o card em modo de edição; title/body são o que está no formulário.
+templ FindingEdit(r *review.Review, f review.Finding, title, body, errMsg string) {
+	{{ url := findingURL(r, f) }}
+	<article id={ "f-" + f.ID } class={ "finding", "editing", "kind-" + f.Kind, "sev-" + f.Severity, verdictClass(f) }>
+		<form hx-post={ url + "/adjust" } hx-target={ "#f-" + f.ID } hx-swap="outerHTML">
+			<header class="finding-head">
+				<span class={ "chip", "kind-" + f.Kind }>{ kindLabel(f.Kind) }</span>
+				<span class={ "chip", "sev-" + f.Severity }>{ severityLabel(f.Severity) }</span>
+				<strong class="finding-title">Ajustando o comentário</strong>
+			</header>
+			if errMsg != "" {
+				<p class="error">{ errMsg }</p>
+			}
+			<label class="field">
+				<span>Título</span>
+				<input name="title" value={ title } autofocus/>
+			</label>
+			<label class="field">
+				<span>Comentário</span>
+				<textarea name="body" rows="5">{ body }</textarea>
+			</label>
+			<footer class="actions">
+				<button type="submit" class="btn ok">Salvar e aprovar</button>
+				<button
+					type="button"
+					class="btn ghost"
+					hx-get={ url }
+					hx-target={ "#f-" + f.ID }
+					hx-swap="outerHTML"
+				>Cancelar</button>
+			</footer>
+		</form>
+	</article>
+}
+
+templ Summary(r *review.Review, markdown string) {
+	{{ t := countVerdicts(r) }}
+	<div id="review" class="summary">
+		<div class="summary-card">
+			<h2>Revisão finalizada</h2>
+			<p class="dim mono">{ r.Branch } → { r.Base }</p>
+			<div class="tally">
+				<span class="tag v-accepted">{ itoa(t.Accepted) } aprovados</span>
+				<span class="tag v-adjusted">{ itoa(t.Adjusted) } ajustados</span>
+				<span class="tag v-rejected">{ itoa(t.Rejected) } retirados</span>
+			</div>
+			<textarea class="mono" rows="22" readonly>{ markdown }</textarea>
+			<div class="summary-actions">
+				<button
+					class="btn primary"
+					onclick="navigator.clipboard.writeText(document.querySelector('.summary textarea').value).then(() => this.textContent = 'Copiado!')"
+				>
+					Copiar markdown
+				</button>
+				<button class="btn ghost" hx-get={ "/ui/reviews/" + r.ID } hx-target="#review" hx-swap="outerHTML">
+					Ver revisão
+				</button>
+				<button class="btn ghost" hx-get="/ui/history" hx-target="#review" hx-swap="outerHTML">
+					Histórico
+				</button>
+			</div>
+		</div>
+	</div>
+}
+
+templ ErrorBox(msg string) {
+	<p class="error">{ msg }</p>
+}
+
+// richText mostra o texto do comentário com `trechos` em fonte de código.
+// O conteúdo continua escapado pelo templ: nenhum HTML do agente é interpretado.
+templ richText(s string) {
+	for _, sp := range codeSpans(s) {
+		if sp.Code {
+			<code>{ sp.Text }</code>
+		} else {
+			{ sp.Text }
+		}
+	}
+}
+
+// Filters são preferências de visualização de quem revisa: não mudam a revisão.
+// O estado vive no <html> (ver filters.js), que o HTMX nunca troca.
+templ Filters(r *review.Review) {
+	<section class="filters" aria-label="Filtros">
+		<div class="filters-title">Filtros <button type="button" class="link js-reset-filters">limpar</button></div>
+		<div class="segmented" role="group" aria-label="Arquivos">
+			<button type="button" data-filter="files" value="all">Todos</button>
+			<button type="button" data-filter="files" value="commented">Comentados</button>
+			<button type="button" data-filter="files" value="pending">Pendentes</button>
+		</div>
+		<fieldset>
+			<legend>Criticidade mínima</legend>
+			<div class="segmented" role="group" aria-label="Criticidade mínima">
+				<button type="button" data-filter="sev" value="all">Todas</button>
+				<button type="button" data-filter="sev" value="minor">Menor+</button>
+				<button type="button" data-filter="sev" value="major">
+					Importante <span class="sev-count">{ itoa(r.CountSeverity("major")) }</span>
+				</button>
+			</div>
+		</fieldset>
+		<fieldset>
+			<legend>Esconder arquivos</legend>
+			<label><input type="checkbox" data-filter="hideTests"/> testes e specs <span class="dim">{ itoa(countFiles(r, isTestFile)) }</span></label>
+			<label><input type="checkbox" data-filter="hideGenerated"/> gerados <span class="dim">{ itoa(countFiles(r, isGeneratedFile)) }</span></label>
+			<label><input type="checkbox" data-filter="hideViewed"/> marcados como vistos</label>
+		</fieldset>
+		<fieldset>
+			<legend>Comentários</legend>
+			<label><input type="checkbox" data-filter="hideJudged"/> esconder já julgados</label>
+			<label><input type="checkbox" data-filter="hidePraise"/> esconder elogios</label>
+		</fieldset>
+		<fieldset>
+			<legend>Diff</legend>
+			<label><input type="checkbox" data-filter="showContext"/> mostrar contexto por arquivo</label>
+			<label><input type="checkbox" data-filter="ignoreWs"/> ignorar mudanças de espaço</label>
+		</fieldset>
+		<div class="filters-actions">
+			<button type="button" class="btn ghost js-expand-all">Expandir tudo</button>
+			<button type="button" class="btn ghost js-collapse-all">Recolher tudo</button>
+		</div>
+		<p class="filters-count dim" data-count></p>
+	</section>
+}
+
+// AgentVerdict destaca a sugestão inicial do agente no topo da sidebar.
+// O rótulo deixa claro que é sugestão: o veredito final é de quem revisa.
+templ AgentVerdict(r *review.Review) {
+	<section class={ "agent-verdict", recClass(r.Recommendation) }>
+		<div class="agent-verdict-label">Sugestão da revisão inicial</div>
+		if r.Recommendation == "" {
+			<div class="agent-verdict-value dim">
+				if r.Status == review.StatusRunning {
+					aguardando o agente…
+				} else {
+					sem sugestão
+				}
+			</div>
+		} else {
+			<div class="agent-verdict-value">
+				<span class="rec-dot"></span>
+				{ recLabel(r.Recommendation) }
+			</div>
+			if r.RecommendationReason != "" {
+				<p class="agent-verdict-reason">@richText(r.RecommendationReason)</p>
+			}
+		}
+		<div class="agent-verdict-sev">
+			<span class="sev-pill sev-major">{ itoa(r.CountSeverity("major")) } importantes</span>
+			<span class="sev-pill sev-minor">{ itoa(r.CountSeverity("minor")) } menores</span>
+			<span class="sev-pill sev-info">{ itoa(r.CountSeverity("info")) } info</span>
+		</div>
+	</section>
+}
+
+// ChangeSummary é o resumo do que a alteração entrega, escrito pelo agente.
+templ ChangeSummary(r *review.Review) {
+	<details class="change-summary" open>
+		<summary>Resumo das alterações</summary>
+		if r.ChangeSummary != "" {
+			<p>@richText(r.ChangeSummary)</p>
+		} else {
+			<p class="dim">
+				if r.Status == review.StatusRunning {
+					O resumo aparece quando o agente terminar a análise.
+				} else {
+					O agente não enviou um resumo.
+				}
+			</p>
+		}
+	</details>
+}
+
+// History lista as revisões salvas; clicar numa linha abre a revisão.
+templ History(revs []review.Review) {
+	<div id="review" class="history">
+		<header class="statusbar">
+			<div class="branch">
+				<span class="brand">Decrivo</span>
+				<span class="dim">Histórico de revisões</span>
+			</div>
+			<button type="button" class="btn ghost" hx-get="/ui/home" hx-target="main.app" hx-swap="outerHTML" style="margin-left:auto">
+				Voltar à revisão atual
+			</button>
+		</header>
+		<div class="history-body">
+			if len(revs) == 0 {
+				<p class="dim">Nenhuma revisão salva ainda.</p>
+			} else {
+				<table class="history-table">
+					<thead>
+						<tr>
+							<th>Data</th>
+							<th>Repositório</th>
+							<th>Branch</th>
+							<th>Sugestão</th>
+							<th>Achados</th>
+							<th>Progresso</th>
+							<th>Status</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, rev := range revs {
+							{{ t := countVerdicts(&rev) }}
+							<tr
+								class="history-row"
+								tabindex="0"
+								hx-get={ "/ui/reviews/" + rev.ID }
+								hx-target="#review"
+								hx-swap="outerHTML"
+								hx-trigger="click, keyup[key=='Enter']"
+							>
+								<td class="nowrap">{ formatTime(rev.CreatedAt) }</td>
+								<td title={ rev.Repo }>{ repoName(rev.Repo) }</td>
+								<td class="mono">{ rev.Branch } <span class="dim">→ { rev.Base }</span></td>
+								<td>
+									if rev.Recommendation != "" {
+										<span class={ "rec-tag", recClass(rev.Recommendation) }><span class="rec-dot"></span>{ recLabel(rev.Recommendation) }</span>
+									} else {
+										<span class="dim">—</span>
+									}
+								</td>
+								<td class="nowrap">
+									{ itoa(len(rev.Findings)) }
+									if n := rev.CountSeverity("major"); n > 0 {
+										<span class="sev-pill sev-major">{ itoa(n) } importantes</span>
+									}
+								</td>
+								<td class="nowrap">
+									<progress value={ itoa(t.Judged) } max={ itoa(max(len(rev.Findings), 1)) }></progress>
+									{ itoa(t.Judged) }/{ itoa(len(rev.Findings)) }
+								</td>
+								<td><span class={ "status-tag", "st-" + string(rev.Status) }>{ statusLabel(&rev) }</span></td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		</div>
+	</div>
+}

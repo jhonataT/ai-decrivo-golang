@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# decrivo commit-msg hook
+# Rejects messages that break the repository's commit convention.
+# Install: bash .claude/skills/commit-blocks/scripts/install-hooks.sh
+
+set -euo pipefail
+
+MSG_FILE="$1"
+MSG="$(grep -v '^#' "$MSG_FILE" || true)"
+SUBJECT="$(printf '%s\n' "$MSG" | sed '/^[[:space:]]*$/d' | head -n 1)"
+
+fail() {
+  echo "" >&2
+  echo "commit rejected: $1" >&2
+  echo "" >&2
+  echo "  subject: $SUBJECT" >&2
+  echo "" >&2
+  echo "  expected: <type>(<scope>): <short imperative subject>" >&2
+  echo "  types:    feat fix refactor perf test docs build ci chore style revert" >&2
+  echo "  see:      .claude/skills/commit-blocks/SKILL.md" >&2
+  echo "" >&2
+  exit 1
+}
+
+if printf '%s' "$SUBJECT" | grep -qE '^(Merge|Revert) '; then
+  exit 0
+fi
+
+[ -n "$SUBJECT" ] || fail "empty commit message"
+
+CC_RE='^(feat|fix|refactor|perf|test|docs|build|ci|chore|style|revert)(\([a-z0-9._-]+\))?!?: [a-z].*[^.]$'
+printf '%s' "$SUBJECT" | grep -qE "$CC_RE" \
+  || fail "subject does not follow Conventional Commits (lowercase start, no trailing period)"
+
+LEN=${#SUBJECT}
+[ "$LEN" -le 72 ] || fail "subject is $LEN characters, limit is 72"
+
+if printf '%s' "$MSG" | grep -qiE 'co-authored-by|generated (with|by)|claude|copilot|chatgpt|\bai[- ]?(generated|assisted|written)\b|anthropic|openai'; then
+  fail "message mentions AI assistance or adds co-authorship"
+fi
+
+# Commit messages are English-only, so anything outside printable ASCII
+# is either an emoji or an accented word that does not belong here.
+if printf '%s' "$MSG" | LC_ALL=C grep -q '[^ -~\t\n]'; then
+  fail "message contains emoji or non-ASCII characters; commit messages are English-only"
+fi
+
+BODY="$(printf '%s\n' "$MSG" | tail -n +2 | sed '/^[[:space:]]*$/d')"
+if [ -n "$BODY" ]; then
+  SECOND_LINE="$(printf '%s\n' "$MSG" | sed -n '2p')"
+  [ -z "$(printf '%s' "$SECOND_LINE" | tr -d '[:space:]')" ] \
+    || fail "body must be separated from the subject by a blank line"
+  BODY_LINES="$(printf '%s\n' "$BODY" | wc -l | tr -d ' ')"
+  if [ "$BODY_LINES" -gt 3 ]; then
+    printf '%s' "$BODY" | grep -q 'BREAKING CHANGE:' \
+      || fail "body has $BODY_LINES lines; keep it under 3 unless it is a BREAKING CHANGE"
+  fi
+fi
+
+exit 0

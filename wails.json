@@ -4,8 +4,6 @@
   "outputfilename": "ai-decrivo-golang",
   "frontend:install": "",
   "frontend:build": "",
-  "frontend:dev:watcher": "",
-  "frontend:dev:serverUrl": "auto",
   "author": {
     "name": "jhonataT",
     "email": "dev.tenorio.jhonata@gmail.com"
