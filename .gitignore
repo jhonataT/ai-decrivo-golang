@@ -1,6 +1,7 @@
 build/bin
 node_modules
-frontend/dist
 
 *_templ.go
 .env
+
+.claude/

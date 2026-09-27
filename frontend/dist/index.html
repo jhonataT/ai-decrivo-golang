@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Decrivo</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/htmx.min.js"></script>
+  <script src="/filters.js" defer></script>
+  <script>
+    // Quando o agente chama finish_review, recarrega a revisão mais recente.
+    window.addEventListener('load', () => {
+      window.runtime?.EventsOn('review:ready', () =>
+        htmx.ajax('GET', '/ui/home', { target: 'body', swap: 'innerHTML' }));
+    });
+  </script>
+</head>
+<body hx-get="/ui/home" hx-trigger="load" hx-swap="innerHTML">
+  <p>loading…</p>
+</body>
+</html>
