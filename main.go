@@ -11,6 +11,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/jhonataT/ai-decrivo-golang/internal/debt"
 	"github.com/jhonataT/ai-decrivo-golang/internal/gitrepo"
 	"github.com/jhonataT/ai-decrivo-golang/internal/jsonstore"
 	"github.com/jhonataT/ai-decrivo-golang/internal/mcpserver"
@@ -37,6 +38,20 @@ func main() {
 	}
 	log.Println("revisões em", dir)
 
+	debtDir, err := jsonstore.DefaultDir("debts")
+	if err != nil {
+		log.Fatal(err)
+	}
+	debtDB, err := jsonstore.New(debtDir, "scan", func(s debt.Scan) string { return s.ID })
+	if err != nil {
+		log.Fatal(err)
+	}
+	debts := debt.NewService(gitrepo.Source{}, debtDB)
+	if err := debts.Load(); err != nil {
+		log.Println("dívidas:", err)
+	}
+	log.Println("mapeamentos de dívidas em", debtDir)
+
 	var appCtx context.Context
 
 	svc.OnChange(func(reviewID string) {
@@ -45,18 +60,21 @@ func main() {
 		}
 	})
 
-	onFinish := func(reviewID string) {
-		if appCtx == nil {
-			return
+	// ready traz a janela para frente e avisa o frontend qual tela recarregar.
+	ready := func(event string) func(id string) {
+		return func(id string) {
+			if appCtx == nil {
+				return
+			}
+			runtime.WindowUnminimise(appCtx)
+			runtime.WindowShow(appCtx)
+			runtime.EventsEmit(appCtx, event, id)
 		}
-		runtime.WindowUnminimise(appCtx)
-		runtime.WindowShow(appCtx)
-		runtime.EventsEmit(appCtx, "review:ready", reviewID)
 	}
 
 	go func() {
 		mux := http.NewServeMux()
-		mux.Handle("/mcp", mcpserver.New(svc, onFinish))
+		mux.Handle("/mcp", mcpserver.New(svc, debts, ready("review:ready"), ready("debt:ready")))
 		srv := &http.Server{Addr: "127.0.0.1:7337", Handler: mux}
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Println("mcp:", err)

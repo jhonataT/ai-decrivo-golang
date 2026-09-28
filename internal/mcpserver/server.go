@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jhonataT/ai-decrivo-golang/internal/debt"
 	"github.com/jhonataT/ai-decrivo-golang/internal/review"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -54,7 +55,9 @@ type AddFindingInput struct {
 	Body     string `json:"body"`
 }
 
-func New(svc *review.Service, onFinish func(reviewID string)) http.Handler {
+// New expõe as ferramentas de revisão de PR e de mapeamento de dívidas.
+// onReviewReady e onDebtReady trazem a janela para frente quando o agente termina.
+func New(svc *review.Service, debts *debt.Service, onReviewReady, onDebtReady func(id string)) http.Handler {
 	s := mcp.NewServer(&mcp.Implementation{Name: "decrivo"}, nil)
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -135,7 +138,7 @@ func New(svc *review.Service, onFinish func(reviewID string)) http.Handler {
 		if err := svc.MarkReady(in.ReviewID, fin); err != nil {
 			return nil, nil, err
 		}
-		onFinish(in.ReviewID)
+		onReviewReady(in.ReviewID)
 
 		rev, err := svc.Get(in.ReviewID)
 		if err != nil {
@@ -177,6 +180,8 @@ func New(svc *review.Service, onFinish func(reviewID string)) http.Handler {
 		}
 		return text("ok"), nil, nil
 	})
+
+	addDebtTools(s, debts, onDebtReady)
 
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, nil)
 }
