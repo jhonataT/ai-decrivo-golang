@@ -12,6 +12,8 @@ import (
 )
 
 type DiffSource interface {
+	// Head resolve a branch para o SHA do commit.
+	Head(ctx context.Context, repoPath, branch string) (string, error)
 	Changes(ctx context.Context, repoPath, base, branch string) ([]FileChange, error)
 }
 
@@ -108,7 +110,13 @@ func (s *Service) save(r Review) error {
 }
 
 func (s *Service) Start(ctx context.Context, repoPath, base, branch string) (*Review, error) {
-	files, err := s.diffs.Changes(ctx, repoPath, base, branch)
+	// O diff sai do SHA, não do nome da branch: se ela andar no meio do
+	// caminho, os achados continuam batendo com o commit registrado.
+	head, err := s.diffs.Head(ctx, repoPath, branch)
+	if err != nil {
+		return nil, err
+	}
+	files, err := s.diffs.Changes(ctx, repoPath, base, head)
 	if err != nil {
 		return nil, err
 	}
@@ -121,6 +129,7 @@ func (s *Service) Start(ctx context.Context, repoPath, base, branch string) (*Re
 	rev := &Review{
 		ID:   fmt.Sprintf("rev-%d", s.seq+1),
 		Repo: repoPath, Base: base, Branch: branch,
+		HeadSHA:   head,
 		Status:    StatusRunning,
 		Files:     files,
 		CreatedAt: now,
@@ -261,14 +270,33 @@ func (s *Service) MarkReady(reviewID string, fin Finish) error {
 	return err
 }
 
-// Finalize fecha a revisão e devolve o resumo em markdown.
-func (s *Service) Finalize(reviewID string) (string, error) {
-	rev, err := s.update(reviewID, func(rev *Review) error { return rev.Finalize() })
+// Finalize fecha a revisão com o veredito geral de quem revisou e devolve o
+// resumo em markdown. Com publish, o agente fica liberado a publicar no PR.
+func (s *Service) Finalize(reviewID string, decision Recommendation, publish bool) (string, error) {
+	rev, err := s.update(reviewID, func(rev *Review) error { return rev.Finalize(decision, publish) })
 	if err != nil {
 		return "", err
 	}
 	s.fire(reviewID)
 	return rev.Summary(), nil
+}
+
+// MarkPublished registra que o agente publicou a revisão no PR, para que ela
+// não seja publicada de novo.
+func (s *Service) MarkPublished(reviewID, url string) error {
+	url = strings.TrimSpace(url)
+	_, err := s.update(reviewID, func(rev *Review) error {
+		if err := rev.CanPublish(); err != nil {
+			return err
+		}
+		rev.PublishedURL = url
+		rev.PublishedAt = time.Now()
+		return nil
+	})
+	if err == nil {
+		s.fire(reviewID)
+	}
+	return err
 }
 
 // Get devolve uma cópia da revisão, segura para ler fora do lock.

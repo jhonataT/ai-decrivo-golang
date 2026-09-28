@@ -4,6 +4,7 @@ import "github.com/jhonataT/ai-decrivo-golang/internal/review"
 
 templ Home(r *review.Review) {
 	<main class="app">
+		@Menu("pr")
 		if r == nil {
 			@Empty()
 		} else {
@@ -79,7 +80,6 @@ templ StatusBar(r *review.Review, oob bool) {
 		}
 	>
 		<div class="branch">
-			<span class="brand">Decrivo</span>
 			<span class="dim repo" title={ r.Repo }>{ repoName(r.Repo) }</span>
 			<span class="ref mono">{ r.Branch }</span>
 			<span class="dim">→</span>
@@ -115,16 +115,24 @@ templ StatusBar(r *review.Review, oob bool) {
 				Ver resumo
 			</button>
 		} else {
-			<button
-				class="btn primary"
-				hx-post={ "/ui/reviews/" + r.ID + "/finalize" }
-				hx-target="#review"
-				hx-swap="outerHTML"
-				disabled?={ r.Pending() > 0 || r.Status != review.StatusReady }
-				title={ finalizeHint(r) }
-			>
-				Finalizar revisão
-			</button>
+			<form class="finalize" hx-post={ "/ui/reviews/" + r.ID + "/finalize" } hx-target="#review" hx-swap="outerHTML">
+				<select name="decision" aria-label="Decisão da revisão" title="Sua decisão; vira o tipo da review no PR">
+					for _, d := range decisions {
+						<option value={ string(d) } selected?={ d == defaultDecision(r) }>{ recLabel(d) }</option>
+					}
+				</select>
+				<label title="Libera o agente a publicar os achados aceitos no PR (gh)">
+					<input type="checkbox" name="publish" value="1"/> publicar no PR
+				</label>
+				<button
+					type="submit"
+					class="btn primary"
+					disabled?={ r.Pending() > 0 || r.Status != review.StatusReady }
+					title={ finalizeHint(r) }
+				>
+					Finalizar revisão
+				</button>
+			</form>
 		}
 	</header>
 }
@@ -360,6 +368,10 @@ templ Summary(r *review.Review, markdown string) {
 				<span class="tag v-adjusted">{ itoa(t.Adjusted) } ajustados</span>
 				<span class="tag v-rejected">{ itoa(t.Rejected) } retirados</span>
 			</div>
+			if r.Decision != "" {
+				<p>Decisão: <span class={ "rec-tag", recClass(r.Decision) }><span class="rec-dot"></span>{ recLabel(r.Decision) }</span></p>
+			}
+			@PublishStatus(r)
 			<textarea class="mono" rows="22" readonly>{ markdown }</textarea>
 			<div class="summary-actions">
 				<button
@@ -377,6 +389,22 @@ templ Summary(r *review.Review, markdown string) {
 			</div>
 		</div>
 	</div>
+}
+
+// PublishStatus mostra em que pé está a publicação no PR, que é feita pelo agente.
+templ PublishStatus(r *review.Review) {
+	if !r.PublishedAt.IsZero() {
+		<p class="publish-status done">
+			Publicada no PR em { formatTime(r.PublishedAt) }
+			if r.PublishedURL != "" {
+				· <span class="mono">{ r.PublishedURL }</span>
+			}
+		</p>
+	} else if r.Publish {
+		<p class="publish-status">
+			Liberada para publicação. No Claude Code, dentro do projeto, rode <code>{ "/decrivo-publish " + r.ID }</code>.
+		</p>
+	}
 }
 
 templ ErrorBox(msg string) {
@@ -492,7 +520,6 @@ templ History(revs []review.Review) {
 	<div id="review" class="history">
 		<header class="statusbar">
 			<div class="branch">
-				<span class="brand">Decrivo</span>
 				<span class="dim">Histórico de revisões</span>
 			</div>
 			<button type="button" class="btn ghost" hx-get="/ui/home" hx-target="main.app" hx-swap="outerHTML" style="margin-left:auto">

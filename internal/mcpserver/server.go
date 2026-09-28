@@ -2,10 +2,12 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/jhonataT/ai-decrivo-golang/internal/debt"
 	"github.com/jhonataT/ai-decrivo-golang/internal/review"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -38,6 +40,11 @@ type FinishInput struct {
 	Reason         string `json:"reason" jsonschema:"uma frase justificando a sugestão"`
 }
 
+type MarkPublishedInput struct {
+	ReviewID string `json:"reviewId"`
+	URL      string `json:"url" jsonschema:"html_url da review criada no GitHub"`
+}
+
 type AddFindingInput struct {
 	ReviewID string `json:"reviewId"`
 	File     string `json:"file"`
@@ -48,7 +55,9 @@ type AddFindingInput struct {
 	Body     string `json:"body"`
 }
 
-func New(svc *review.Service, onFinish func(reviewID string)) http.Handler {
+// New expõe as ferramentas de revisão de PR e de mapeamento de dívidas.
+// onReviewReady e onDebtReady trazem a janela para frente quando o agente termina.
+func New(svc *review.Service, debts *debt.Service, onReviewReady, onDebtReady func(id string)) http.Handler {
 	s := mcp.NewServer(&mcp.Implementation{Name: "decrivo"}, nil)
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -129,7 +138,7 @@ func New(svc *review.Service, onFinish func(reviewID string)) http.Handler {
 		if err := svc.MarkReady(in.ReviewID, fin); err != nil {
 			return nil, nil, err
 		}
-		onFinish(in.ReviewID)
+		onReviewReady(in.ReviewID)
 
 		rev, err := svc.Get(in.ReviewID)
 		if err != nil {
@@ -137,6 +146,42 @@ func New(svc *review.Service, onFinish func(reviewID string)) http.Handler {
 		}
 		return text(fmt.Sprintf("revisão pronta: %d achados aguardando veredito humano no Decrivo", rev.Pending())), nil, nil
 	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_publishable_review",
+		Description: "After the human finalized the review in Decrivo and checked \"publicar no PR\", return the GitHub " +
+			"pull request review payload with only the accepted findings. Fails if the review is not released for publishing. " +
+			"To publish, run inside repoPath: save the JSON to a file; `gh pr view <branch> --json number,headRefOid,url`; " +
+			"if headRefOid differs from commit_id, stop and tell the user (the branch changed after the review); otherwise " +
+			"`gh api repos/{owner}/{repo}/pulls/<number>/reviews --method POST --input <file>` and call mark_published with the " +
+			"html_url from the response. Post the payload as is: never edit comments or change the event.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in ReviewInput) (*mcp.CallToolResult, any, error) {
+		rev, err := svc.Get(in.ReviewID)
+		if err != nil {
+			return nil, nil, err
+		}
+		payload, err := rev.GitHubReview()
+		if err != nil {
+			return nil, nil, err
+		}
+		js, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return nil, nil, err
+		}
+		return text(fmt.Sprintf("repoPath=%s\nbranch=%s\npayload:\n%s", rev.Repo, rev.Branch, js)), nil, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "mark_published",
+		Description: "Record that the review was posted to the pull request, so it is not posted twice.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in MarkPublishedInput) (*mcp.CallToolResult, any, error) {
+		if err := svc.MarkPublished(in.ReviewID, in.URL); err != nil {
+			return nil, nil, err
+		}
+		return text("ok"), nil, nil
+	})
+
+	addDebtTools(s, debts, onDebtReady)
 
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, nil)
 }

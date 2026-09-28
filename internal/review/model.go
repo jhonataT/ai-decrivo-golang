@@ -51,6 +51,8 @@ var (
 	ErrEmptyText             = errors.New("título e comentário não podem ficar vazios")
 	ErrEmptySummary          = errors.New("o resumo das alterações não pode ficar vazio")
 	ErrInvalidRecommendation = errors.New("sugestão inválida: use approve, request_changes ou comment")
+	ErrInvalidDecision       = errors.New("decisão inválida: use approve, request_changes ou comment")
+	ErrNotPublishable        = errors.New("revisão não liberada para publicação")
 )
 
 type Finding struct {
@@ -71,12 +73,14 @@ type Finding struct {
 }
 
 type Review struct {
-	ID     string       `json:"id"`
-	Repo   string       `json:"repo"`
-	Base   string       `json:"base"`
-	Branch string       `json:"branch"`
-	Status Status       `json:"status"`
-	Files  []FileChange `json:"files"`
+	ID     string `json:"id"`
+	Repo   string `json:"repo"`
+	Base   string `json:"base"`
+	Branch string `json:"branch"`
+	// HeadSHA é o commit revisado; o GitHub precisa dele para ancorar os comentários.
+	HeadSHA string       `json:"headSha,omitempty"`
+	Status  Status       `json:"status"`
+	Files   []FileChange `json:"files"`
 
 	Findings []Finding `json:"findings"`
 
@@ -84,6 +88,14 @@ type Review struct {
 	ChangeSummary        string         `json:"changeSummary,omitempty"`
 	Recommendation       Recommendation `json:"recommendation,omitempty"`
 	RecommendationReason string         `json:"recommendationReason,omitempty"`
+
+	// Preenchidos por quem revisa ao finalizar. Decision é o veredito geral
+	// (no mesmo vocabulário da Recommendation) e Publish libera o agente a
+	// publicar os achados aceitos no PR.
+	Decision     Recommendation `json:"decision,omitempty"`
+	Publish      bool           `json:"publish,omitempty"`
+	PublishedURL string         `json:"publishedUrl,omitempty"`
+	PublishedAt  time.Time      `json:"publishedAt,omitzero"`
 
 	// Interrupted marca uma análise que não terminou (o app fechou antes do finish_review).
 	Interrupted bool `json:"interrupted,omitempty"`
@@ -142,13 +154,18 @@ func (r *Review) CountSeverity(sev string) int {
 	return n
 }
 
-func (r *Review) Finalize() error {
+func (r *Review) Finalize(decision Recommendation, publish bool) error {
 	if r.Status != StatusReady {
 		return fmt.Errorf("%w (status: %s)", ErrNotReady, r.Status)
 	}
 	if r.Pending() > 0 {
 		return fmt.Errorf("%w: %d restantes", ErrPendingVerdicts, r.Pending())
 	}
+	if !decision.Valid() {
+		return fmt.Errorf("%w (recebido: %q)", ErrInvalidDecision, decision)
+	}
+	r.Decision = decision
+	r.Publish = publish
 	r.Status = StatusFinalized
 	r.FinalizedAt = time.Now()
 	return nil

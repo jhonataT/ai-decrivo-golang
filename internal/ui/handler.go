@@ -6,16 +6,18 @@ import (
 
 	"github.com/a-h/templ"
 
+	"github.com/jhonataT/ai-decrivo-golang/internal/debt"
 	"github.com/jhonataT/ai-decrivo-golang/internal/review"
 )
 
 type Handler struct {
-	mux *http.ServeMux
-	svc *review.Service
+	mux   *http.ServeMux
+	svc   *review.Service
+	debts *debt.Service
 }
 
-func NewHandler(svc *review.Service) http.Handler {
-	h := &Handler{mux: http.NewServeMux(), svc: svc}
+func NewHandler(svc *review.Service, debts *debt.Service) http.Handler {
+	h := &Handler{mux: http.NewServeMux(), svc: svc, debts: debts}
 	h.mux.HandleFunc("GET /ui/home", h.home)
 	h.mux.HandleFunc("GET /ui/current", h.current)
 	h.mux.HandleFunc("GET /ui/reviews/{id}", h.reviewPage)
@@ -29,6 +31,7 @@ func NewHandler(svc *review.Service) http.Handler {
 	h.mux.HandleFunc("POST /ui/reviews/{id}/finalize", h.finalize)
 	h.mux.HandleFunc("GET /ui/reviews/{id}/summary", h.summary)
 	h.mux.HandleFunc("GET /ui/history", h.history)
+	h.routeDebts()
 	return h
 }
 
@@ -135,7 +138,8 @@ func (h *Handler) load(r *http.Request) (review.Review, review.Finding, error) {
 
 func (h *Handler) finalize(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	md, err := h.svc.Finalize(id)
+	decision := review.Recommendation(r.FormValue("decision"))
+	md, err := h.svc.Finalize(id, decision, r.FormValue("publish") != "")
 	if err != nil {
 		render(w, r, ErrorBox(err.Error()))
 		return

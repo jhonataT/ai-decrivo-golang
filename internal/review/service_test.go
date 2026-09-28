@@ -8,6 +8,8 @@ import (
 
 type fakeDiffs struct{}
 
+func (fakeDiffs) Head(context.Context, string, string) (string, error) { return "abc123", nil }
+
 func (fakeDiffs) Changes(context.Context, string, string, string) ([]FileChange, error) {
 	patch := "@@ -1,1 +1,2 @@\n a\n+b\n"
 	return []FileChange{{Path: "x.go", Patch: patch, Lines: ParsePatch(patch)}}, nil

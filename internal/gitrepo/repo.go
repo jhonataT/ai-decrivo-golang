@@ -72,12 +72,46 @@ type FileDiff struct {
 	Patch  string
 }
 
+// RevParse resolve uma referência (branch, tag) para o SHA do commit.
+func (r *Repo) RevParse(ctx context.Context, ref string) (string, error) {
+	out, err := r.run(ctx, "rev-parse", "--verify", ref+"^{commit}")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 func (r *Repo) MergeBase(ctx context.Context, base, branch string) (string, error) {
 	out, err := r.run(ctx, "merge-base", base, branch)
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// ChangedFiles lista os arquivos alterados entre o merge-base e a branch,
+// sem os deletados e sem os que Changes também ignora (lockfiles, binários).
+func (r *Repo) ChangedFiles(ctx context.Context, base, branch string) ([]string, error) {
+	mb, err := r.MergeBase(ctx, base, branch)
+	if err != nil {
+		return nil, err
+	}
+	out, err := r.run(ctx, "diff", "--name-only", "--diff-filter=d", mb+".."+branch)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, path := range strings.Split(strings.TrimSpace(out), "\n") {
+		if path != "" && !skipFile(path) {
+			files = append(files, path)
+		}
+	}
+	return files, nil
+}
+
+// ShowFile devolve o conteúdo do arquivo no commit indicado.
+func (r *Repo) ShowFile(ctx context.Context, commit, path string) (string, error) {
+	return r.run(ctx, "show", commit+":"+path)
 }
 
 func (r *Repo) Changes(ctx context.Context, base, branch string) ([]FileDiff, error) {

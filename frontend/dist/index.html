@@ -7,10 +7,13 @@
   <script src="/htmx.min.js"></script>
   <script src="/filters.js" defer></script>
   <script>
-    // Quando o agente chama finish_review, recarrega a revisão mais recente.
+    // Quando o agente termina (finish_review ou finish_debt_scan), abre a tela
+    // correspondente já com o resultado mais recente.
     window.addEventListener('load', () => {
       window.runtime?.EventsOn('review:ready', () =>
         htmx.ajax('GET', '/ui/home', { target: 'body', swap: 'innerHTML' }));
+      window.runtime?.EventsOn('debt:ready', () =>
+        htmx.ajax('GET', '/ui/debts', { target: 'body', swap: 'innerHTML' }));
     });
   </script>
 </head>

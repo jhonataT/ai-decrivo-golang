@@ -11,7 +11,7 @@ import (
 )
 
 func TestSaveLoadRoundTrip(t *testing.T) {
-	st, err := New(t.TempDir())
+	st, err := Reviews(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 }
 
 func TestLoadAllIgnoraArquivoCorrompido(t *testing.T) {
-	st, _ := New(t.TempDir())
+	st, _ := Reviews(t.TempDir())
 	_ = st.Save(review.Review{ID: "rev-1"})
 	_ = os.WriteFile(filepath.Join(st.Dir(), "rev-2.json"), []byte("{quebrado"), 0o644)
 
@@ -65,7 +65,7 @@ func TestLoadAllIgnoraArquivoCorrompido(t *testing.T) {
 }
 
 func TestSaveRecusaIDPerigoso(t *testing.T) {
-	st, _ := New(t.TempDir())
+	st, _ := Reviews(t.TempDir())
 	if err := st.Save(review.Review{ID: `..\..\x`}); err == nil {
 		t.Fatal("ID com caminho deveria ser recusado")
 	}
