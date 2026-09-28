@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -36,6 +37,11 @@ type FinishInput struct {
 	Summary        string `json:"summary" jsonschema:"resumo direto do que a alteração entrega, em 2 a 4 frases, para quem vai aprovar o PR"`
 	Recommendation string `json:"recommendation" jsonschema:"sugestão inicial: approve, request_changes ou comment"`
 	Reason         string `json:"reason" jsonschema:"uma frase justificando a sugestão"`
+}
+
+type MarkPublishedInput struct {
+	ReviewID string `json:"reviewId"`
+	URL      string `json:"url" jsonschema:"html_url da review criada no GitHub"`
 }
 
 type AddFindingInput struct {
@@ -136,6 +142,40 @@ func New(svc *review.Service, onFinish func(reviewID string)) http.Handler {
 			return nil, nil, err
 		}
 		return text(fmt.Sprintf("revisão pronta: %d achados aguardando veredito humano no Decrivo", rev.Pending())), nil, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_publishable_review",
+		Description: "After the human finalized the review in Decrivo and checked \"publicar no PR\", return the GitHub " +
+			"pull request review payload with only the accepted findings. Fails if the review is not released for publishing. " +
+			"To publish, run inside repoPath: save the JSON to a file; `gh pr view <branch> --json number,headRefOid,url`; " +
+			"if headRefOid differs from commit_id, stop and tell the user (the branch changed after the review); otherwise " +
+			"`gh api repos/{owner}/{repo}/pulls/<number>/reviews --method POST --input <file>` and call mark_published with the " +
+			"html_url from the response. Post the payload as is: never edit comments or change the event.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in ReviewInput) (*mcp.CallToolResult, any, error) {
+		rev, err := svc.Get(in.ReviewID)
+		if err != nil {
+			return nil, nil, err
+		}
+		payload, err := rev.GitHubReview()
+		if err != nil {
+			return nil, nil, err
+		}
+		js, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return nil, nil, err
+		}
+		return text(fmt.Sprintf("repoPath=%s\nbranch=%s\npayload:\n%s", rev.Repo, rev.Branch, js)), nil, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "mark_published",
+		Description: "Record that the review was posted to the pull request, so it is not posted twice.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in MarkPublishedInput) (*mcp.CallToolResult, any, error) {
+		if err := svc.MarkPublished(in.ReviewID, in.URL); err != nil {
+			return nil, nil, err
+		}
+		return text("ok"), nil, nil
 	})
 
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, nil)

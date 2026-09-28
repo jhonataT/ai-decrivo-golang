@@ -371,6 +371,7 @@ templ Summary(r *review.Review, markdown string) {
 			if r.Decision != "" {
 				<p>Decisão: <span class={ "rec-tag", recClass(r.Decision) }><span class="rec-dot"></span>{ recLabel(r.Decision) }</span></p>
 			}
+			@PublishStatus(r)
 			<textarea class="mono" rows="22" readonly>{ markdown }</textarea>
 			<div class="summary-actions">
 				<button
@@ -388,6 +389,22 @@ templ Summary(r *review.Review, markdown string) {
 			</div>
 		</div>
 	</div>
+}
+
+// PublishStatus mostra em que pé está a publicação no PR, que é feita pelo agente.
+templ PublishStatus(r *review.Review) {
+	if !r.PublishedAt.IsZero() {
+		<p class="publish-status done">
+			Publicada no PR em { formatTime(r.PublishedAt) }
+			if r.PublishedURL != "" {
+				· <span class="mono">{ r.PublishedURL }</span>
+			}
+		</p>
+	} else if r.Publish {
+		<p class="publish-status">
+			Liberada para publicação. No Claude Code, dentro do projeto, rode <code>{ "/decrivo-publish " + r.ID }</code>.
+		</p>
+	}
 }
 
 templ ErrorBox(msg string) {

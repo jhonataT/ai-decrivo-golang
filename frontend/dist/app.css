@@ -338,6 +338,8 @@ html.show-context .file-context { display: block; }
 .finalize { display: flex; align-items: center; gap: 8px; margin: 0; }
 .finalize select { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); }
 .finalize label { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.publish-status { font-size: 13px; color: var(--muted); }
+.publish-status.done { color: var(--green); }
 
 /* ---------- histórico ---------- */
 .history-body { padding: 20px; }

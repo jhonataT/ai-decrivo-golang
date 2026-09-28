@@ -52,6 +52,7 @@ var (
 	ErrEmptySummary          = errors.New("o resumo das alterações não pode ficar vazio")
 	ErrInvalidRecommendation = errors.New("sugestão inválida: use approve, request_changes ou comment")
 	ErrInvalidDecision       = errors.New("decisão inválida: use approve, request_changes ou comment")
+	ErrNotPublishable        = errors.New("revisão não liberada para publicação")
 )
 
 type Finding struct {
@@ -91,8 +92,10 @@ type Review struct {
 	// Preenchidos por quem revisa ao finalizar. Decision é o veredito geral
 	// (no mesmo vocabulário da Recommendation) e Publish libera o agente a
 	// publicar os achados aceitos no PR.
-	Decision Recommendation `json:"decision,omitempty"`
-	Publish  bool           `json:"publish,omitempty"`
+	Decision     Recommendation `json:"decision,omitempty"`
+	Publish      bool           `json:"publish,omitempty"`
+	PublishedURL string         `json:"publishedUrl,omitempty"`
+	PublishedAt  time.Time      `json:"publishedAt,omitzero"`
 
 	// Interrupted marca uma análise que não terminou (o app fechou antes do finish_review).
 	Interrupted bool `json:"interrupted,omitempty"`

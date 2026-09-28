@@ -281,6 +281,24 @@ func (s *Service) Finalize(reviewID string, decision Recommendation, publish boo
 	return rev.Summary(), nil
 }
 
+// MarkPublished registra que o agente publicou a revisão no PR, para que ela
+// não seja publicada de novo.
+func (s *Service) MarkPublished(reviewID, url string) error {
+	url = strings.TrimSpace(url)
+	_, err := s.update(reviewID, func(rev *Review) error {
+		if err := rev.CanPublish(); err != nil {
+			return err
+		}
+		rev.PublishedURL = url
+		rev.PublishedAt = time.Now()
+		return nil
+	})
+	if err == nil {
+		s.fire(reviewID)
+	}
+	return err
+}
+
 // Get devolve uma cópia da revisão, segura para ler fora do lock.
 func (s *Service) Get(reviewID string) (Review, error) {
 	s.mu.RLock()
