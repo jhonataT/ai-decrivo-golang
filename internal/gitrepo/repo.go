@@ -72,6 +72,15 @@ type FileDiff struct {
 	Patch  string
 }
 
+// RevParse resolve uma referência (branch, tag) para o SHA do commit.
+func (r *Repo) RevParse(ctx context.Context, ref string) (string, error) {
+	out, err := r.run(ctx, "rev-parse", "--verify", ref+"^{commit}")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 func (r *Repo) MergeBase(ctx context.Context, base, branch string) (string, error) {
 	out, err := r.run(ctx, "merge-base", base, branch)
 	if err != nil {

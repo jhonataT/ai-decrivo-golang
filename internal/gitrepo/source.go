@@ -12,6 +12,14 @@ type Source struct{}
 // Garante em tempo de compilação que Source satisfaz review.DiffSource.
 var _ review.DiffSource = Source{}
 
+func (Source) Head(ctx context.Context, repoPath, branch string) (string, error) {
+	repo, err := Open(repoPath)
+	if err != nil {
+		return "", err
+	}
+	return repo.RevParse(ctx, branch)
+}
+
 func (Source) Changes(ctx context.Context, repoPath, base, branch string) ([]review.FileChange, error) {
 	repo, err := Open(repoPath)
 

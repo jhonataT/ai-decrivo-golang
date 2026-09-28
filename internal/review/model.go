@@ -71,12 +71,14 @@ type Finding struct {
 }
 
 type Review struct {
-	ID     string       `json:"id"`
-	Repo   string       `json:"repo"`
-	Base   string       `json:"base"`
-	Branch string       `json:"branch"`
-	Status Status       `json:"status"`
-	Files  []FileChange `json:"files"`
+	ID     string `json:"id"`
+	Repo   string `json:"repo"`
+	Base   string `json:"base"`
+	Branch string `json:"branch"`
+	// HeadSHA é o commit revisado; o GitHub precisa dele para ancorar os comentários.
+	HeadSHA string       `json:"headSha,omitempty"`
+	Status  Status       `json:"status"`
+	Files   []FileChange `json:"files"`
 
 	Findings []Finding `json:"findings"`
 

@@ -12,6 +12,8 @@ import (
 )
 
 type DiffSource interface {
+	// Head resolve a branch para o SHA do commit.
+	Head(ctx context.Context, repoPath, branch string) (string, error)
 	Changes(ctx context.Context, repoPath, base, branch string) ([]FileChange, error)
 }
 
@@ -108,7 +110,13 @@ func (s *Service) save(r Review) error {
 }
 
 func (s *Service) Start(ctx context.Context, repoPath, base, branch string) (*Review, error) {
-	files, err := s.diffs.Changes(ctx, repoPath, base, branch)
+	// O diff sai do SHA, não do nome da branch: se ela andar no meio do
+	// caminho, os achados continuam batendo com o commit registrado.
+	head, err := s.diffs.Head(ctx, repoPath, branch)
+	if err != nil {
+		return nil, err
+	}
+	files, err := s.diffs.Changes(ctx, repoPath, base, head)
 	if err != nil {
 		return nil, err
 	}
@@ -121,6 +129,7 @@ func (s *Service) Start(ctx context.Context, repoPath, base, branch string) (*Re
 	rev := &Review{
 		ID:   fmt.Sprintf("rev-%d", s.seq+1),
 		Repo: repoPath, Base: base, Branch: branch,
+		HeadSHA:   head,
 		Status:    StatusRunning,
 		Files:     files,
 		CreatedAt: now,
