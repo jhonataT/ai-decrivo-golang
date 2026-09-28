@@ -22,11 +22,11 @@ import (
 var assets embed.FS
 
 func main() {
-	dir, err := jsonstore.DefaultDir()
+	dir, err := jsonstore.DefaultDir("reviews")
 	if err != nil {
 		log.Fatal(err)
 	}
-	db, err := jsonstore.New(dir)
+	db, err := jsonstore.Reviews(dir)
 	if err != nil {
 		log.Fatal(err)
 	}
