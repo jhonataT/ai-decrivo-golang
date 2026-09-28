@@ -1,0 +1,441 @@
+package ui
+
+import (
+	"github.com/jhonataT/ai-decrivo-golang/internal/debt"
+	"github.com/jhonataT/ai-decrivo-golang/internal/review"
+)
+
+// Menu alterna entre as duas revisões. Fica fora do #review/#scan, então
+// polling e vereditos nunca o trocam.
+templ Menu(active string) {
+	<nav class="menu" aria-label="Menu">
+		<span class="brand">Decrivo</span>
+		<button
+			type="button"
+			class={ "menu-item", templ.KV("active", active == "pr") }
+			hx-get="/ui/home"
+			hx-target="main.app"
+			hx-swap="outerHTML"
+		>Revisar PR</button>
+		<button
+			type="button"
+			class={ "menu-item", templ.KV("active", active == "debts") }
+			hx-get="/ui/debts"
+			hx-target="main.app"
+			hx-swap="outerHTML"
+		>Revisar Dívidas Técnicas</button>
+	</nav>
+}
+
+templ DebtsHome(sc *debt.Scan) {
+	<main class="app">
+		@Menu("debts")
+		if sc == nil {
+			@DebtsEmpty()
+		} else {
+			@ScanPage(sc)
+		}
+	</main>
+}
+
+templ DebtsEmpty() {
+	<div class="empty" hx-get="/ui/debts/current" hx-trigger="every 2s" hx-swap="outerHTML">
+		<div class="empty-card">
+			<div class="brand">Dívidas técnicas</div>
+			<p>Nenhum mapeamento de dívidas ainda.</p>
+			<p class="dim">No Claude Code, dentro do projeto, rode:</p>
+			<code class="cmd">/decrivo-debts</code>
+			<p class="dim">para o projeto inteiro (na branch base), ou</p>
+			<code class="cmd">/decrivo-debts nome-da-branch</code>
+			<p class="dim">para só as dívidas que a branch introduz.</p>
+			<p>
+				<button type="button" class="link" hx-get="/ui/debts/history" hx-target="closest .empty" hx-swap="outerHTML">
+					ver mapeamentos anteriores
+				</button>
+			</p>
+		</div>
+	</div>
+}
+
+templ ScanPage(sc *debt.Scan) {
+	<div id="scan" class="review" data-scan={ sc.ID }>
+		@ScanBar(sc, false)
+		if sc.Status == review.StatusRunning {
+			<div class="banner">
+				<span class="spinner"></span>
+				O agente está mapeando as dívidas. Elas aparecem conforme chegam; os vereditos liberam quando ele terminar.
+			</div>
+		} else if sc.Status == review.StatusFinalized {
+			<div class="banner done">
+				Mapeamento finalizado em { formatTime(sc.FinalizedAt) }. Somente leitura.
+			</div>
+		} else if sc.Interrupted {
+			<div class="banner warn">
+				O mapeamento foi interrompido (o app fechou antes do agente terminar). As dívidas que chegaram podem ser julgadas normalmente.
+			</div>
+		}
+		<div class="layout">
+			<aside class="sidebar">
+				@ScanOverview(sc)
+				@DebtNav(sc, false)
+			</aside>
+			<div class="files debts">
+				if len(sc.Debts) == 0 {
+					<p class="dim">Nenhuma dívida registrada ainda.</p>
+				}
+				for _, d := range sc.Debts {
+					@DebtCard(sc, d)
+				}
+			</div>
+		</div>
+	</div>
+}
+
+templ ScanBar(sc *debt.Scan, oob bool) {
+	{{ t := countDebtVerdicts(sc) }}
+	<header
+		id="statusbar"
+		class="statusbar"
+		if oob {
+			hx-swap-oob="true"
+		}
+		if sc.Status == review.StatusRunning {
+			hx-get={ "/ui/debts/" + sc.ID }
+			hx-trigger="every 1s"
+			hx-target="#scan"
+			hx-swap="outerHTML"
+		}
+	>
+		<div class="branch">
+			<span class="dim repo" title={ sc.Repo }>{ repoName(sc.Repo) }</span>
+			if sc.Branch != "" {
+				<span class="ref mono">{ sc.Branch }</span>
+				<span class="dim">→</span>
+			}
+			<span class="ref base mono">{ sc.Base }</span>
+			if sc.Branch == "" {
+				<span class="dim">projeto inteiro</span>
+			}
+		</div>
+		<div class="progress">
+			<progress value={ itoa(t.Judged) } max={ itoa(max(len(sc.Debts), 1)) }></progress>
+			<span><strong>{ itoa(t.Judged) }</strong> de { itoa(len(sc.Debts)) } julgadas</span>
+		</div>
+		<div class="tally">
+			<span class="tag v-accepted">{ itoa(t.Accepted) } aceitas</span>
+			<span class="tag v-adjusted">{ itoa(t.Adjusted) } ajustadas</span>
+			<span class="tag v-rejected">{ itoa(t.Rejected) } recusadas</span>
+			<span class="tag hours" title="esforço das dívidas aceitas">{ debt.Hours(sc.AcceptedHours()) }</span>
+		</div>
+		<button
+			type="button"
+			class="btn js-next-pending"
+			title="Ir para a próxima dívida pendente (N; P volta)"
+			disabled?={ sc.Pending() == 0 }
+		>
+			Próxima pendente <kbd>N</kbd>
+		</button>
+		<button type="button" class="btn ghost" hx-get="/ui/debts/history" hx-target="#scan" hx-swap="outerHTML">
+			Histórico
+		</button>
+		if sc.Status == review.StatusFinalized {
+			<button class="btn primary" hx-get={ "/ui/debts/" + sc.ID + "/summary" } hx-target="#scan" hx-swap="outerHTML">
+				Ver resumo
+			</button>
+		} else {
+			<form class="finalize" hx-post={ "/ui/debts/" + sc.ID + "/finalize" } hx-target="#scan" hx-swap="outerHTML">
+				if len(sc.Projects) > 0 {
+					<select name="project" aria-label="Projeto do GitHub" title="Projeto do GitHub onde as issues entram">
+						<option value="">sem projeto</option>
+						for _, p := range sc.Projects {
+							<option value={ p.Title }>{ p.Title }</option>
+						}
+					</select>
+				}
+				<label title="Libera o agente a criar uma issue para cada dívida aceita (gh)">
+					<input type="checkbox" name="publish" value="1"/> criar issues
+				</label>
+				<button
+					type="submit"
+					class="btn primary"
+					disabled?={ sc.Pending() > 0 || sc.Status != review.StatusReady }
+					title={ scanFinalizeHint(sc) }
+				>
+					Finalizar
+				</button>
+			</form>
+		}
+	</header>
+}
+
+// ScanOverview é o panorama do agente e o escopo, no topo da sidebar.
+templ ScanOverview(sc *debt.Scan) {
+	<details class="change-summary" open>
+		<summary>Panorama</summary>
+		if sc.Summary != "" {
+			<p>@richText(sc.Summary)</p>
+		} else if sc.Status == review.StatusRunning {
+			<p class="dim">O panorama aparece quando o agente terminar.</p>
+		} else {
+			<p class="dim">O agente não enviou um panorama.</p>
+		}
+		<p class="dim scan-meta">
+			{ sc.Scope() } · commit <span class="mono">{ shortSHA(sc.Commit) }</span><br/>
+			{ itoa(len(sc.Debts)) } dívidas · { debt.Hours(sc.TotalHours()) } estimadas pelo agente
+		</p>
+	</details>
+}
+
+templ DebtNav(sc *debt.Scan, oob bool) {
+	<nav
+		id="filenav"
+		class="filenav debtnav"
+		if oob {
+			hx-swap-oob="true"
+		}
+	>
+		<div class="nav-title">Dívidas <span class="dim">{ itoa(len(sc.Debts)) }</span></div>
+		for _, d := range sc.Debts {
+			<a class="nav-item" href={ templ.SafeURL("#d-" + d.ID) } title={ d.Location() }>
+				<span class="nav-path">{ d.Title }</span>
+				<span class="dim nowrap">{ debt.Hours(d.EffortHours) }</span>
+				if d.Verdict == review.VerdictPending {
+					<span class="pill warn" title="pendente">•</span>
+				} else if d.Verdict == review.VerdictRejected {
+					<span class="pill" title="recusada">×</span>
+				} else {
+					<span class="pill ok" title="aceita">✓</span>
+				}
+			</a>
+		}
+	</nav>
+}
+
+templ DebtCard(sc *debt.Scan, d debt.Debt) {
+	{{ url := debtURL(sc, d) }}
+	<article id={ "d-" + d.ID } class={ "finding", "debt", debtVerdictClass(d) }>
+		<header class="finding-head">
+			<span class="chip hours">{ debt.Hours(d.EffortHours) }</span>
+			<strong class="finding-title">@richText(d.Title)</strong>
+			<span class={ "verdict", debtVerdictClass(d) }>{ debtVerdictLabel(d) }</span>
+		</header>
+		<div class="debt-meta">
+			<span class="mono">{ d.Location() }</span>
+			for _, l := range d.Labels {
+				<span class="label-chip">{ l }</span>
+			}
+		</div>
+		<div class="finding-body">@richText(d.Description)</div>
+		<div class="debt-reason">
+			<span class="debt-reason-label">Por que é dívida</span>
+			<div>@richText(d.Reason)</div>
+		</div>
+		if len(d.Snippet) > 0 {
+			@Snippet(d)
+		}
+		if d.Adjusted && d.Orig != nil {
+			<details class="original">
+				<summary>texto original do agente</summary>
+				<strong>@richText(d.Orig.Title)</strong> <span class="dim">· { debt.Hours(d.Orig.EffortHours) }</span>
+				<div class="finding-body">@richText(d.Orig.Description)</div>
+				<div class="finding-body">@richText(d.Orig.Reason)</div>
+			</details>
+		}
+		if d.IssueURL != "" {
+			<p class="issue-link">Issue: <span class="mono">{ d.IssueURL }</span></p>
+		}
+		<footer class="actions">
+			if d.Verdict == review.VerdictPending {
+				<button class="btn ok" hx-post={ url + "/accept" } hx-target={ "#d-" + d.ID } hx-swap="outerHTML" disabled?={ scanLocked(sc) }>Aceitar</button>
+				<button class="btn" hx-get={ url + "/edit" } hx-target={ "#d-" + d.ID } hx-swap="outerHTML" disabled?={ scanLocked(sc) }>Editar</button>
+				<button class="btn danger" hx-post={ url + "/reject" } hx-target={ "#d-" + d.ID } hx-swap="outerHTML" disabled?={ scanLocked(sc) }>Recusar</button>
+				if scanLocked(sc) {
+					<span class="dim hint">{ scanLockHint(sc) }</span>
+				}
+			} else if !scanLocked(sc) {
+				<button class="btn ghost" hx-post={ url + "/reset" } hx-target={ "#d-" + d.ID } hx-swap="outerHTML">Desfazer</button>
+			}
+		</footer>
+	</article>
+}
+
+// Snippet mostra o trecho guardado, destacando as linhas da dívida.
+templ Snippet(d debt.Debt) {
+	<table class="snippet mono">
+		for _, l := range d.Snippet {
+			<tr class={ templ.KV("hit", l.N >= d.StartLine && l.N <= d.EndLine) }>
+				<td class="num">{ itoa(l.N) }</td>
+				<td class="code">{ l.Text }</td>
+			</tr>
+		}
+	</table>
+}
+
+// DebtEdit é o card em modo de edição; t é o que está no formulário.
+templ DebtEdit(sc *debt.Scan, d debt.Debt, t debt.Text, errMsg string) {
+	{{ url := debtURL(sc, d) }}
+	<article id={ "d-" + d.ID } class={ "finding", "debt", "editing", debtVerdictClass(d) }>
+		<form hx-post={ url + "/adjust" } hx-target={ "#d-" + d.ID } hx-swap="outerHTML">
+			<header class="finding-head">
+				<strong class="finding-title">Editando a dívida</strong>
+				<span class="dim mono">{ d.Location() }</span>
+			</header>
+			if errMsg != "" {
+				<p class="error">{ errMsg }</p>
+			}
+			<label class="field">
+				<span>Título</span>
+				<input name="title" value={ t.Title } autofocus/>
+			</label>
+			<label class="field">
+				<span>Descrição</span>
+				<textarea name="description" rows="4">{ t.Description }</textarea>
+			</label>
+			<label class="field">
+				<span>Por que é dívida</span>
+				<textarea name="reason" rows="3">{ t.Reason }</textarea>
+			</label>
+			<label class="field field-short">
+				<span>Esforço estimado (horas)</span>
+				<input name="effort" inputmode="decimal" pattern="[0-9]+([.,][0-9]+)?" value={ formatFloat(t.EffortHours) }/>
+			</label>
+			if len(sc.Labels) > 0 {
+				<fieldset class="field labels-field">
+					<legend>Labels</legend>
+					for _, l := range sc.Labels {
+						<label title={ l.Description }>
+							<input type="checkbox" name="labels" value={ l.Name } checked?={ hasString(t.Labels, l.Name) }/> { l.Name }
+						</label>
+					}
+				</fieldset>
+			}
+			<footer class="actions">
+				<button type="submit" class="btn ok">Salvar e aceitar</button>
+				<button type="button" class="btn ghost" hx-get={ url } hx-target={ "#d-" + d.ID } hx-swap="outerHTML">Cancelar</button>
+			</footer>
+		</form>
+	</article>
+}
+
+templ ScanSummary(sc *debt.Scan) {
+	{{ t := countDebtVerdicts(sc) }}
+	<div id="scan" class="summary">
+		<div class="summary-card">
+			<h2>Mapeamento finalizado</h2>
+			<p class="dim">{ repoName(sc.Repo) } · { sc.Scope() }</p>
+			<div class="tally">
+				<span class="tag v-accepted">{ itoa(t.Accepted) } aceitas</span>
+				<span class="tag v-adjusted">{ itoa(t.Adjusted) } ajustadas</span>
+				<span class="tag v-rejected">{ itoa(t.Rejected) } recusadas</span>
+				<span class="tag hours">{ debt.Hours(sc.AcceptedHours()) } de esforço</span>
+			</div>
+			if sc.Project != "" {
+				<p>Projeto: <strong>{ sc.Project }</strong></p>
+			}
+			@IssuesStatus(sc)
+			<table class="history-table">
+				<thead>
+					<tr><th>Dívida</th><th>Onde</th><th>Esforço</th><th>Issue</th></tr>
+				</thead>
+				<tbody>
+					for _, d := range sc.Debts {
+						if d.Verdict == review.VerdictAccepted {
+							<tr>
+								<td>{ d.Title }</td>
+								<td class="mono">{ d.Location() }</td>
+								<td class="nowrap">{ debt.Hours(d.EffortHours) }</td>
+								<td class="mono">
+									if d.IssueURL != "" {
+										{ d.IssueURL }
+									} else {
+										<span class="dim">—</span>
+									}
+								</td>
+							</tr>
+						}
+					}
+				</tbody>
+			</table>
+			<div class="summary-actions">
+				<button class="btn ghost" hx-get={ "/ui/debts/" + sc.ID } hx-target="#scan" hx-swap="outerHTML">Ver dívidas</button>
+				<button class="btn ghost" hx-get="/ui/debts/history" hx-target="#scan" hx-swap="outerHTML">Histórico</button>
+			</div>
+		</div>
+	</div>
+}
+
+// IssuesStatus mostra em que pé está a criação das issues, que é feita pelo agente.
+templ IssuesStatus(sc *debt.Scan) {
+	{{ done, total := issueCounts(sc) }}
+	if !sc.Publish {
+		<p class="publish-status">Issues não liberadas: as dívidas ficam só aqui no Decrivo.</p>
+	} else if total == 0 {
+		<p class="publish-status">Nenhuma dívida aceita para virar issue.</p>
+	} else if done == total {
+		<p class="publish-status done">{ itoa(done) } issues criadas.</p>
+	} else {
+		<p class="publish-status">
+			{ itoa(done) } de { itoa(total) } issues criadas. No Claude Code, dentro do projeto, rode
+			<code>{ "/decrivo-debts-publish " + sc.ID }</code>.
+		</p>
+	}
+}
+
+templ ScanHistory(scans []debt.Scan) {
+	<div id="scan" class="history">
+		<header class="statusbar">
+			<div class="branch">
+				<span class="dim">Histórico de mapeamentos de dívidas</span>
+			</div>
+			<button type="button" class="btn ghost" hx-get="/ui/debts" hx-target="main.app" hx-swap="outerHTML" style="margin-left:auto">
+				Voltar ao mapeamento atual
+			</button>
+		</header>
+		<div class="history-body">
+			if len(scans) == 0 {
+				<p class="dim">Nenhum mapeamento salvo ainda.</p>
+			} else {
+				<table class="history-table">
+					<thead>
+						<tr>
+							<th>Data</th>
+							<th>Repositório</th>
+							<th>Escopo</th>
+							<th>Dívidas</th>
+							<th>Esforço aceito</th>
+							<th>Issues</th>
+							<th>Status</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, sc := range scans {
+							{{ done, total := issueCounts(&sc) }}
+							<tr
+								class="history-row"
+								tabindex="0"
+								hx-get={ "/ui/debts/" + sc.ID }
+								hx-target="#scan"
+								hx-swap="outerHTML"
+								hx-trigger="click, keyup[key=='Enter']"
+							>
+								<td class="nowrap">{ formatTime(sc.CreatedAt) }</td>
+								<td title={ sc.Repo }>{ repoName(sc.Repo) }</td>
+								<td>{ sc.Scope() }</td>
+								<td>{ itoa(len(sc.Debts)) }</td>
+								<td class="nowrap">{ debt.Hours(sc.AcceptedHours()) }</td>
+								<td class="nowrap">
+									if sc.Publish {
+										{ itoa(done) }/{ itoa(total) }
+									} else {
+										<span class="dim">—</span>
+									}
+								</td>
+								<td><span class={ "status-tag", "st-" + string(sc.Status) }>{ scanStatusLabel(&sc) }</span></td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		</div>
+	</div>
+}

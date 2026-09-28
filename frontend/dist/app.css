@@ -373,3 +373,32 @@ html.show-context .file-context { display: block; }
 @media (max-width: 1120px) {
   .statusbar progress, .statusbar .repo, .statusbar kbd { display: none; }
 }
+
+/* ---------- menu ---------- */
+.menu { display: flex; align-items: center; gap: 4px; padding: 6px 20px; background: var(--bg); border-bottom: 1px solid var(--border); }
+.menu .brand { margin-right: 16px; }
+.menu-item { font: inherit; font-size: 13px; font-weight: 500; padding: 4px 12px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--muted); cursor: pointer; }
+.menu-item:hover { color: var(--text); background: var(--panel); }
+.menu-item.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
+.menu + .empty { min-height: calc(100vh - 42px); }
+
+/* ---------- dívidas técnicas ---------- */
+.tag.hours, .chip.hours { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.chip.hours { text-transform: none; }
+.debt-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 14px 0; font-size: 12px; color: var(--muted); }
+.label-chip { font-size: 11px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); }
+.debt-reason { margin: 4px 14px 0; padding: 8px 10px; border-radius: 6px; background: var(--bg); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.debt-reason-label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 2px; }
+.snippet { margin: 8px 14px 0; width: calc(100% - 28px); border-collapse: collapse; font-size: 12px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.snippet td { padding: 0 8px; white-space: pre; }
+.snippet .num { width: 1%; text-align: right; color: var(--muted); user-select: none; border-right: 1px solid var(--border); }
+.snippet .code { overflow-wrap: normal; }
+.snippet tr.hit td { background: color-mix(in srgb, var(--amber) 14%, transparent); }
+.issue-link { margin: 6px 14px 0; font-size: 12px; color: var(--green); overflow-wrap: anywhere; }
+.scan-meta { font-size: 12px; }
+.field-short input { max-width: 140px; }
+.labels-field { border: none; margin: 0; display: flex; flex-direction: row; flex-wrap: wrap; gap: 4px 14px; }
+.labels-field legend { padding: 0; margin-bottom: 4px; font-size: 12px; color: var(--muted); }
+.labels-field label { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text); }
+.field textarea { min-height: 60px; }
+.debtnav .nav-path { direction: ltr; }

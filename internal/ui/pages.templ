@@ -4,6 +4,7 @@ import "github.com/jhonataT/ai-decrivo-golang/internal/review"
 
 templ Home(r *review.Review) {
 	<main class="app">
+		@Menu("pr")
 		if r == nil {
 			@Empty()
 		} else {
@@ -79,7 +80,6 @@ templ StatusBar(r *review.Review, oob bool) {
 		}
 	>
 		<div class="branch">
-			<span class="brand">Decrivo</span>
 			<span class="dim repo" title={ r.Repo }>{ repoName(r.Repo) }</span>
 			<span class="ref mono">{ r.Branch }</span>
 			<span class="dim">→</span>
@@ -520,7 +520,6 @@ templ History(revs []review.Review) {
 	<div id="review" class="history">
 		<header class="statusbar">
 			<div class="branch">
-				<span class="brand">Decrivo</span>
 				<span class="dim">Histórico de revisões</span>
 			</div>
 			<button type="button" class="btn ghost" hx-get="/ui/home" hx-target="main.app" hx-swap="outerHTML" style="margin-left:auto">

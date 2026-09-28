@@ -84,7 +84,7 @@ func main() {
 	err = wails.Run(&options.App{
 		Title: "Decrivo", Width: 1440, Height: 900,
 		OnStartup:   func(ctx context.Context) { appCtx = ctx },
-		AssetServer: &assetserver.Options{Assets: assets, Handler: ui.NewHandler(svc)},
+		AssetServer: &assetserver.Options{Assets: assets, Handler: ui.NewHandler(svc, debts)},
 	})
 	if err != nil {
 		log.Fatal(err)
