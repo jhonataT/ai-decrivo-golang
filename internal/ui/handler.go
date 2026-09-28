@@ -135,7 +135,8 @@ func (h *Handler) load(r *http.Request) (review.Review, review.Finding, error) {
 
 func (h *Handler) finalize(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	md, err := h.svc.Finalize(id)
+	decision := review.Recommendation(r.FormValue("decision"))
+	md, err := h.svc.Finalize(id, decision, r.FormValue("publish") != "")
 	if err != nil {
 		render(w, r, ErrorBox(err.Error()))
 		return

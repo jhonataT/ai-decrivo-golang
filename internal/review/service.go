@@ -270,9 +270,10 @@ func (s *Service) MarkReady(reviewID string, fin Finish) error {
 	return err
 }
 
-// Finalize fecha a revisão e devolve o resumo em markdown.
-func (s *Service) Finalize(reviewID string) (string, error) {
-	rev, err := s.update(reviewID, func(rev *Review) error { return rev.Finalize() })
+// Finalize fecha a revisão com o veredito geral de quem revisou e devolve o
+// resumo em markdown. Com publish, o agente fica liberado a publicar no PR.
+func (s *Service) Finalize(reviewID string, decision Recommendation, publish bool) (string, error) {
+	rev, err := s.update(reviewID, func(rev *Review) error { return rev.Finalize(decision, publish) })
 	if err != nil {
 		return "", err
 	}

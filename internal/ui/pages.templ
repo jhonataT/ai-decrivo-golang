@@ -115,16 +115,24 @@ templ StatusBar(r *review.Review, oob bool) {
 				Ver resumo
 			</button>
 		} else {
-			<button
-				class="btn primary"
-				hx-post={ "/ui/reviews/" + r.ID + "/finalize" }
-				hx-target="#review"
-				hx-swap="outerHTML"
-				disabled?={ r.Pending() > 0 || r.Status != review.StatusReady }
-				title={ finalizeHint(r) }
-			>
-				Finalizar revisão
-			</button>
+			<form class="finalize" hx-post={ "/ui/reviews/" + r.ID + "/finalize" } hx-target="#review" hx-swap="outerHTML">
+				<select name="decision" aria-label="Decisão da revisão" title="Sua decisão; vira o tipo da review no PR">
+					for _, d := range decisions {
+						<option value={ string(d) } selected?={ d == defaultDecision(r) }>{ recLabel(d) }</option>
+					}
+				</select>
+				<label title="Libera o agente a publicar os achados aceitos no PR (gh)">
+					<input type="checkbox" name="publish" value="1"/> publicar no PR
+				</label>
+				<button
+					type="submit"
+					class="btn primary"
+					disabled?={ r.Pending() > 0 || r.Status != review.StatusReady }
+					title={ finalizeHint(r) }
+				>
+					Finalizar revisão
+				</button>
+			</form>
 		}
 	</header>
 }
@@ -360,6 +368,9 @@ templ Summary(r *review.Review, markdown string) {
 				<span class="tag v-adjusted">{ itoa(t.Adjusted) } ajustados</span>
 				<span class="tag v-rejected">{ itoa(t.Rejected) } retirados</span>
 			</div>
+			if r.Decision != "" {
+				<p>Decisão: <span class={ "rec-tag", recClass(r.Decision) }><span class="rec-dot"></span>{ recLabel(r.Decision) }</span></p>
+			}
 			<textarea class="mono" rows="22" readonly>{ markdown }</textarea>
 			<div class="summary-actions">
 				<button

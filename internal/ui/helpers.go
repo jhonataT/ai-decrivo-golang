@@ -107,6 +107,16 @@ func recLabel(rec review.Recommendation) string {
 	return string(rec)
 }
 
+var decisions = []review.Recommendation{review.RecommendApprove, review.RecommendComment, review.RecommendRequestChanges}
+
+// defaultDecision parte da sugestão do agente; quem revisa pode trocar.
+func defaultDecision(r *review.Review) review.Recommendation {
+	if r.Recommendation.Valid() {
+		return r.Recommendation
+	}
+	return review.RecommendComment
+}
+
 func recClass(rec review.Recommendation) string {
 	if rec == "" {
 		return "rec-none"
