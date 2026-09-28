@@ -2,9 +2,10 @@
 
 [![ci](https://github.com/jhonataT/ai-decrivo-golang/actions/workflows/ci.yml/badge.svg)](https://github.com/jhonataT/ai-decrivo-golang/actions/workflows/ci.yml)
 
-App desktop para revisar branches com a ajuda de um agente de código, mas com a palavra final sempre de quem está revisando.
+App desktop para revisar código com a ajuda de um agente, mas com a palavra final sempre de quem está revisando. Tem dois modos, escolhidos no menu do topo:
 
-O agente (Claude Code, ou qualquer cliente MCP) lê o diff e deixa comentários ancorados nas linhas. O Decrivo mostra esses comentários ao lado do diff, e você aceita, rejeita ou reescreve cada um. No final sai um resumo em Markdown só com o que você aprovou, pronto para colar no PR. Se você liberar, o próprio agente publica esses comentários no PR do GitHub.
+- **Revisar PR**: o agente (Claude Code, ou qualquer cliente MCP) lê o diff de uma branch e deixa comentários ancorados nas linhas. O Decrivo mostra esses comentários ao lado do diff, e você aceita, rejeita ou reescreve cada um. No final sai um resumo em Markdown só com o que você aprovou, pronto para colar no PR. Se você liberar, o próprio agente publica esses comentários no PR do GitHub.
+- **Revisar Dívidas Técnicas**: o agente mapeia as dívidas técnicas do projeto inteiro, ou só as que uma branch introduz, com título, descrição, motivo e esforço estimado em horas. Você confirma, edita ou recusa cada uma, e as aprovadas viram issues no GitHub.
 
 Comecei o projeto porque revisão automática que comenta direto no PR gera muito ruído. Eu queria a primeira passada da IA, mas com um filtro humano antes de qualquer coisa chegar ao time.
 
@@ -44,6 +45,17 @@ Comecei o projeto porque revisão automática que comenta direto no PR gera muit
 
 Lockfiles, imagens, fontes e arquivos deletados ficam fora do diff. Arquivos com patch muito grande (acima de ~60 KB) também são ignorados.
 
+## Dívidas técnicas
+
+1. No Claude Code, dentro do projeto, rode `/decrivo-debts` para mapear o projeto inteiro no estado da branch base (`main`, ou `master` se não houver `main`). Com `/decrivo-debts feat/x`, o mapeamento considera só os arquivos do diff da branch e procura as dívidas que ela introduz ou agrava. Uma base diferente vai como segundo argumento: `/decrivo-debts feat/x develop`.
+2. O agente lista as labels do repositório (`gh label list`) e os projetos do GitHub do dono (`gh project list`) e chama `start_debt_scan`. O Decrivo registra o commit mapeado. Todas as linhas e trechos se referem a esse commit, e alterações não commitadas ficam de fora.
+3. Para cada dívida, o agente chama `add_debt` com título, descrição, motivo, trecho (arquivo e linhas), esforço em horas e labels sugeridas entre as existentes. O Decrivo confere se o arquivo e as linhas existem no commit e guarda o trecho de código junto.
+4. Com `finish_debt_scan`, o agente manda um panorama e a janela vem para frente, direto na tela de dívidas.
+5. Cada dívida aparece num card com o trecho de código. Você aceita, recusa ou edita título, descrição, motivo, horas e labels. Ao finalizar, escolhe um projeto do GitHub (opcional) e marca **criar issues**.
+6. `/decrivo-debts-publish debt-2` cria uma issue por dívida aceita, com as labels escolhidas. O corpo traz a descrição, o motivo, o link fixo para o trecho no commit e o esforço estimado. Se houver projeto, a issue entra nele.
+
+As issues são criadas uma a uma, e o Decrivo registra cada uma assim que ela é criada (`mark_debt_published`). Se algo falhar no meio, rodar o comando de novo cria só as que faltam. Cada issue também leva uma chave (`decrivo:<commit>/<mapeamento>/<dívida>`) que o agente procura antes de criar, para não duplicar.
+
 ## Ferramentas MCP
 
 | ferramenta | o que faz |
@@ -56,6 +68,11 @@ Lockfiles, imagens, fontes e arquivos deletados ficam fora do diff. Arquivos com
 | `finish_review` | encerra a análise e traz a janela para frente |
 | `get_publishable_review` | depois do seu veredito, devolve o payload da review do GitHub com os achados aceitos |
 | `mark_published` | registra que a revisão foi publicada no PR |
+| `start_debt_scan` | abre um mapeamento de dívidas (projeto inteiro ou diff de uma branch) com as labels e os projetos disponíveis |
+| `add_debt` | registra uma dívida com trecho, motivo, esforço em horas e labels |
+| `finish_debt_scan` | encerra o mapeamento e traz a janela para frente |
+| `get_publishable_debts` | depois do seu veredito, devolve as issues a criar (só dívidas aceitas e ainda sem issue) |
+| `mark_debt_published` | registra a issue criada para uma dívida |
 
 O servidor escuta só em `127.0.0.1:7337/mcp`, sem autenticação. Não exponha essa porta.
 
@@ -66,7 +83,7 @@ Pré-requisitos:
 - Go 1.25+
 - [Wails CLI v2](https://wails.io/docs/gettingstarted/installation) (`go install github.com/wailsapp/wails/v2/cmd/wails@latest`)
 - Git no `PATH`
-- [GitHub CLI (`gh`)](https://cli.github.com/) no `PATH` e autenticado (`gh auth login`), para publicar no PR. O agente precisa ter acesso ao `gh`: no Claude Code, autorize `gh pr view` e `gh api` quando ele pedir, ou adicione esses comandos à lista de permissões. Sem o `gh` o resto funciona normalmente, e você cola o Markdown no PR à mão
+- [GitHub CLI (`gh`)](https://cli.github.com/) no `PATH` e autenticado (`gh auth login`), para publicar no PR e criar issues. O agente precisa ter acesso ao `gh`: os comandos `/decrivo-publish`, `/decrivo-debts` e `/decrivo-debts-publish` já liberam os comandos `gh` que usam; fora deles, autorize quando o agente pedir. Para listar e usar projetos do GitHub, o token precisa dos escopos `read:project` e `project` (`gh auth refresh -s read:project,project`). Sem o `gh` o resto funciona normalmente: você cola o Markdown no PR à mão, e as dívidas ficam só no Decrivo
 - WebView2 no Windows (já vem no Windows 10/11 atualizado)
 
 ```sh
@@ -85,7 +102,7 @@ wails build
 
 O binário sai em `build/bin/`.
 
-Os arquivos `*_templ.go` não são versionados. Sempre que mexer em `internal/ui/pages.templ`, rode `go tool templ generate` de novo.
+Os arquivos `*_templ.go` não são versionados. Sempre que mexer em algum `internal/ui/*.templ`, rode `go tool templ generate` de novo.
 
 ### Conectando o Claude Code
 
@@ -101,11 +118,11 @@ Para publicar no PR, confirme antes que o `gh` enxerga o repositório: rode `gh 
 
 ## Onde ficam os dados
 
-Cada revisão vira um arquivo JSON na pasta de configuração do usuário:
+Cada revisão e cada mapeamento de dívidas vira um arquivo JSON na pasta de configuração do usuário, em `reviews` e `debts`:
 
-- Windows: `%AppData%\Decrivo\reviews`
-- macOS: `~/Library/Application Support/Decrivo/reviews`
-- Linux: `~/.config/Decrivo/reviews`
+- Windows: `%AppData%\Decrivo\reviews` e `%AppData%\Decrivo\debts`
+- macOS: `~/Library/Application Support/Decrivo/...`
+- Linux: `~/.config/Decrivo/...`
 
 O arquivo tem um campo de versão do schema, para dar para migrar o formato sem perder histórico. Se um arquivo estiver corrompido, o app abre mesmo assim e só registra o erro no log.
 
@@ -114,9 +131,10 @@ O arquivo tem um campo de versão do schema, para dar para migrar o formato sem 
 ```
 main.go               sobe o servidor MCP e a janela Wails
 internal/
-  gitrepo/            wrapper do git (merge-base, diff, filtro de arquivos)
-  review/             regras da revisão: achados, vereditos, resumo final
-  jsonstore/          persistência em JSON, um arquivo por revisão
+  gitrepo/            wrapper do git (merge-base, diff, leitura de arquivo num commit)
+  review/             regras da revisão de PR: achados, vereditos, resumo final
+  debt/               regras do mapeamento de dívidas: dívidas, vereditos, issues
+  jsonstore/          persistência em JSON, um arquivo por revisão ou mapeamento
   mcpserver/          ferramentas MCP expostas ao agente
   ui/                 páginas em templ, servidas para o HTMX
 frontend/dist/        HTML, CSS e JS estáticos (HTMX, sem bundler)
@@ -135,6 +153,7 @@ go test ./...
 
 - [ ] Testar e empacotar para macOS e Linux
 - [x] Publicar o comentário direto no PR (GitHub) depois do veredito
+- [x] Mapear dívidas técnicas e criar as issues aprovadas
 - [ ] Porta e caminho de dados configuráveis
 - [ ] Release com binário para Windows
 
